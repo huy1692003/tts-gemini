@@ -1,0 +1,5 @@
+{
+  "name": "Vinavoice Master",
+  "description": "Professional Text-to-Speech Converter using Gemini 2.5 Flash TTS",
+  "requestFramePermissions": []
+}
