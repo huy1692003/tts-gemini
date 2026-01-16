@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { SupportedLanguage, TTSConfig, VOICE_OPTIONS } from '../types';
-import { Sparkles, PlayCircle, Loader2, Mic, Users, User, MessageSquare } from 'lucide-react';
+import { Sparkles, PlayCircle, Loader2, Mic, Users, User, MessageSquare, Settings } from 'lucide-react';
 import { generateSpeech, base64ToBlobUrl } from '../services/geminiService';
 
 interface InputSectionProps {
@@ -10,6 +10,8 @@ interface InputSectionProps {
   setConfig: (config: TTSConfig) => void;
   onConvert: () => void;
   isLoading: boolean;
+  prefixText: string;
+  setPrefixText: (text: string) => void;
 }
 
 const InputSection: React.FC<InputSectionProps> = ({ 
@@ -18,7 +20,9 @@ const InputSection: React.FC<InputSectionProps> = ({
   config, 
   setConfig, 
   onConvert,
-  isLoading 
+  isLoading,
+  prefixText,
+  setPrefixText
 }) => {
   const [playingSample, setPlayingSample] = useState<string | null>(null);
 
@@ -103,6 +107,23 @@ const InputSection: React.FC<InputSectionProps> = ({
   return (
     <div className="glass-panel rounded-3xl p-6 flex flex-col h-full shadow-[0_0_40px_rgba(139,92,246,0.15)]">
       
+      {/* Prefix Text Input - Thêm mới */}
+      <div className="mb-4 bg-gradient-to-r from-amber-500/10 to-orange-500/10 p-3 rounded-2xl border border-amber-500/20">
+        <label className="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">
+          <Settings className="w-4 h-4" /> Hướng Dẫn Giọng Đọc
+        </label>
+        <input
+          type="text"
+          value={prefixText}
+          onChange={(e) => setPrefixText(e.target.value)}
+          className="w-full bg-black/30 text-white placeholder-gray-500 rounded-xl px-4 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500/50 text-sm border border-white/5"
+          placeholder="VD: Giọng nói phải to khỏe, mạnh mẽ..."
+        />
+        <p className="text-[10px] text-gray-500 mt-1 italic">
+          ✨ Text này sẽ tự động thêm vào đầu mỗi lần tạo giọng nói để hướng dẫn AI
+        </p>
+      </div>
+
       {/* Mode Switcher Tabs */}
       <div className="flex bg-black/20 p-1 rounded-2xl mb-6">
         <button 
