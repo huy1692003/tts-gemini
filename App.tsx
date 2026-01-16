@@ -9,11 +9,16 @@ import { base64ToBlobUrl, generateSpeech } from './services/geminiService';
 const App: React.FC = () => {
   const [text, setText] = useState<string>("");
   
+  // Thêm state cho prefix text
+  const [prefixText, setPrefixText] = useState<string>(
+    "Giọng nói phải to khỏe chắc chắn, mạnh mẽ, dễ dàng, đọc nhanh nhẹn, chất giọng quảng cáo:"
+  );
+  
   const [config, setConfig] = useState<TTSConfig>({
     mode: 'single',
     language: SupportedLanguage.VIETNAMESE,
     speed: 1.0,
-    voiceName: 'Zephyr', // Default trendy voice
+    voiceName: 'Zephyr',
     speaker1: { name: 'Speaker 1', voice: 'Orus' },
     speaker2: { name: 'Speaker 2', voice: 'Aoede' }
   });
@@ -23,9 +28,9 @@ const App: React.FC = () => {
     isLoading: false,
     error: null
   });
-
+  
   const [history, setHistory] = useState<HistoryItem[]>([]);
-
+  
   const getVoiceLabel = (): string => {
     if (config.mode === 'single') {
       const v = VOICE_OPTIONS.find(v => v.id === config.voiceName);
@@ -38,18 +43,23 @@ const App: React.FC = () => {
       return `${n1} & ${n2}`;
     }
   };
-
+  
   const handleConvert = async () => {
     if (!text.trim()) return;
-
+    
     setAudioState({
       blobUrl: null,
       isLoading: true,
       error: null
     });
-
+    
     try {
-      const base64Data = await generateSpeech(text, config);
+      // Nối prefix text với text chính khi generate
+      const fullText = prefixText.trim() 
+        ? `${prefixText} ${text}` 
+        : text;
+      
+      const base64Data = await generateSpeech(fullText, config);
       const blobUrl = base64ToBlobUrl(base64Data);
       
       const newItem: HistoryItem = {
@@ -60,9 +70,9 @@ const App: React.FC = () => {
         blobUrl: blobUrl,
         voiceLabel: getVoiceLabel()
       };
-
+      
       setHistory(prev => [newItem, ...prev]);
-
+      
       setAudioState({
         blobUrl: blobUrl,
         isLoading: false,
@@ -76,7 +86,7 @@ const App: React.FC = () => {
       });
     }
   };
-
+  
   const handlePlayHistory = (item: HistoryItem) => {
     setAudioState({
       blobUrl: item.blobUrl,
@@ -84,7 +94,7 @@ const App: React.FC = () => {
       error: null
     });
   };
-
+  
   return (
     <div className="min-h-screen text-white font-sans overflow-x-hidden selection:bg-secondary selection:text-white">
       <div className="relative z-10 flex flex-col min-h-screen">
@@ -92,7 +102,6 @@ const App: React.FC = () => {
         
         <main className="flex-1 w-full max-w-7xl mx-auto px-4 pb-8">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-200px)] min-h-[600px]">
-            {/* Left Column: Input (7 cols) */}
             <div className="lg:col-span-7 h-full">
                <InputSection 
                 text={text}
@@ -101,10 +110,11 @@ const App: React.FC = () => {
                 setConfig={setConfig}
                 onConvert={handleConvert}
                 isLoading={audioState.isLoading}
+                prefixText={prefixText}
+                setPrefixText={setPrefixText}
               />
             </div>
-
-            {/* Right Column: Result & History (5 cols) */}
+            
             <div className="lg:col-span-5 h-full">
               <ResultSection 
                 audioState={audioState}
@@ -115,7 +125,7 @@ const App: React.FC = () => {
             </div>
           </div>
         </main>
-
+        
         <Footer />
       </div>
     </div>
