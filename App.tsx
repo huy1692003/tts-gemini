@@ -11,7 +11,7 @@ const App: React.FC = () => {
   
   // Thêm state cho prefix text
   const [prefixText, setPrefixText] = useState<string>(
-    "Giọng nói phải to khỏe chắc chắn, mạnh mẽ, dễ dàng, đọc nhanh nhẹn, chất giọng quảng cáo:"
+    "Giọng nói phải to khỏe , mạnh mẽ, rõ ràng, nhanh nhẹn:"
   );
   
   const [config, setConfig] = useState<TTSConfig>({
