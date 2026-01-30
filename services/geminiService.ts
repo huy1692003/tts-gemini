@@ -4,10 +4,13 @@ import { TTSConfig, SupportedLanguage } from "../types";
 // Parse API keys from environment variable
 const getApiKeys = (): string[] => {
   const apiKeysString = process.env.API_KEYS || "";
-  return apiKeysString
+  const keys = apiKeysString
     .split(";")
     .map(key => key.trim())
     .filter(key => key.length > 0);
+  
+  console.log(`[API Keys] Tổng số keys: ${keys.length}`);
+  return keys;
 };
 
 // Get random API key from the list
@@ -15,11 +18,14 @@ const getRandomApiKey = (): string => {
   const apiKeys = getApiKeys();
   
   if (apiKeys.length === 0) {
+    console.error("[API Keys] Không tìm thấy API key trong biến môi trường API_KEYS");
     throw new Error("Không tìm thấy API key. Vui lòng cấu hình API_KEYS trong file .env");
   }
   
   const randomIndex = Math.floor(Math.random() * apiKeys.length);
-  return apiKeys[randomIndex];
+  const selectedKey = apiKeys[randomIndex];
+  console.log(`[API Keys] Chọn key #${randomIndex + 1} (${selectedKey.substring(0, 10)}...)`);
+  return selectedKey;
 };
 
 // Retry logic with different API keys
@@ -31,6 +37,8 @@ const executeWithRetry = async <T>(
   const usedKeys = new Set<string>();
   let lastError: any;
 
+  console.log(`[Retry] Bắt đầu với tối đa ${maxRetries} lần thử`);
+
   for (let attempt = 0; attempt < maxRetries && usedKeys.size < apiKeys.length; attempt++) {
     try {
       // Get a random key that hasn't been used yet
@@ -40,24 +48,36 @@ const executeWithRetry = async <T>(
       } while (usedKeys.has(apiKey) && usedKeys.size < apiKeys.length);
       
       usedKeys.add(apiKey);
+      console.log(`[Retry] Lần thử ${attempt + 1}/${maxRetries} - Sử dụng key: ${apiKey.substring(0, 10)}...`);
       
-      return await operation(apiKey);
+      const result = await operation(apiKey);
+      console.log(`[Retry] ✓ Thành công ở lần thử ${attempt + 1}`);
+      return result;
     } catch (error: any) {
       lastError = error;
+      
+      console.error(`[Retry] ✗ Lỗi ở lần thử ${attempt + 1}:`, {
+        message: error.message,
+        code: error.code,
+        status: error.status,
+        fullError: JSON.stringify(error, null, 2)
+      });
       
       // If it's a 429 error, try with another key
       const errorStr = JSON.stringify(error);
       if (errorStr.includes("429") || errorStr.includes("RESOURCE_EXHAUSTED")) {
-        console.warn(`API key bị giới hạn, thử key khác... (Lần thử ${attempt + 1}/${maxRetries})`);
+        console.warn(`[Retry] API key bị giới hạn (429/RESOURCE_EXHAUSTED), thử key khác...`);
         continue;
       }
       
       // For other errors, throw immediately
+      console.error(`[Retry] Lỗi không phải 429, dừng retry`);
       throw error;
     }
   }
   
   // All retries failed
+  console.error(`[Retry] Tất cả ${usedKeys.size} API keys đều thất bại. Lỗi cuối:`, lastError);
   throw new Error("Tất cả API keys đều bị giới hạn. Vui lòng thử lại sau.");
 };
 
@@ -65,23 +85,38 @@ export const generateSpeech = async (
   text: string,
   config: TTSConfig
 ): Promise<string> => {
+  console.log(`[generateSpeech] Bắt đầu tạo speech`, {
+    textLength: text.length,
+    mode: config.mode,
+    voiceName: config.mode === 'single' ? config.voiceName : undefined,
+    speakers: config.mode === 'conversation' ? {
+      speaker1: config.speaker1,
+      speaker2: config.speaker2
+    } : undefined
+  });
+
   // 1. Aggressive Sanitization
   let cleanText = text
     .replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "")
     .replace(/\r\n/g, "\n")
     .trim();
 
+  console.log(`[generateSpeech] Sau khi sanitize: ${cleanText.length} ký tự`);
+
   if (!cleanText) {
+    console.error("[generateSpeech] Văn bản rỗng sau khi sanitize");
     throw new Error("Vui lòng nhập văn bản.");
   }
 
   if (cleanText.length > 4000) {
+    console.error(`[generateSpeech] Văn bản quá dài: ${cleanText.length} ký tự`);
     throw new Error(`Văn bản quá dài (${cleanText.length} ký tự). Vui lòng cắt nhỏ dưới 4000 ký tự.`);
   }
 
   return executeWithRetry(async (apiKey) => {
     try {
       // Initialize Gemini API with the selected key
+      console.log(`[Gemini API] Khởi tạo với key: ${apiKey.substring(0, 10)}...`);
       const ai = new GoogleGenAI({ apiKey });
       const model = "gemini-2.5-flash-preview-tts";
       
@@ -93,6 +128,7 @@ export const generateSpeech = async (
         // Multi-speaker config
         const prompt = `TTS the following conversation between ${config.speaker1.name} and ${config.speaker2.name}:\n\n${cleanText}`;
         textToProcess = prompt;
+        console.log(`[Gemini API] Conversation mode - Prompt length: ${textToProcess.length}`);
 
         speechConfig = {
           multiSpeakerVoiceConfig: {
@@ -108,6 +144,7 @@ export const generateSpeech = async (
             ]
           }
         };
+        console.log(`[Gemini API] Speech config:`, JSON.stringify(speechConfig, null, 2));
       } else {
         // Single speaker
         speechConfig = {
@@ -115,8 +152,10 @@ export const generateSpeech = async (
             prebuiltVoiceConfig: { voiceName: config.voiceName || 'Puck' },
           },
         };
+        console.log(`[Gemini API] Single speaker mode - Voice: ${config.voiceName || 'Puck'}`);
       }
 
+      console.log(`[Gemini API] Gửi request đến model: ${model}`);
       const response = await ai.models.generateContent({
         model: model,
         contents: [{ parts: [{ text: textToProcess }] }],
@@ -126,16 +165,37 @@ export const generateSpeech = async (
         },
       });
 
+      console.log(`[Gemini API] Response nhận được:`, {
+        hasCandidates: !!response.candidates,
+        candidatesLength: response.candidates?.length,
+        fullResponse: JSON.stringify(response, null, 2)
+      });
+
       const candidate = response.candidates?.[0];
 
-      if (!candidate) throw new Error("API không phản hồi.");
+      if (!candidate) {
+        console.error("[Gemini API] Không có candidate trong response");
+        throw new Error("API không phản hồi.");
+      }
+
+      console.log(`[Gemini API] Candidate details:`, {
+        finishReason: candidate.finishReason,
+        hasContent: !!candidate.content,
+        hasParts: !!candidate.content?.parts,
+        partsLength: candidate.content?.parts?.length,
+        firstPartType: candidate.content?.parts?.[0] ? Object.keys(candidate.content.parts[0]) : undefined
+      });
 
       const base64Audio = candidate.content?.parts?.[0]?.inlineData?.data;
 
-      if (base64Audio) return base64Audio;
+      if (base64Audio) {
+        console.log(`[Gemini API] ✓ Nhận được audio base64, length: ${base64Audio.length}`);
+        return base64Audio;
+      }
 
       // Error handling
       if (candidate.finishReason && candidate.finishReason !== "STOP") {
+         console.error(`[Gemini API] Finish reason không phải STOP: ${candidate.finishReason}`);
          if (candidate.finishReason === "SAFETY") throw new Error("Nội dung không an toàn.");
          if (candidate.finishReason === "RECITATION") throw new Error("Nội dung vi phạm bản quyền.");
          if (candidate.finishReason === "OTHER") throw new Error("Lỗi xử lý mô hình. Thử lại với đoạn văn ngắn hơn.");
@@ -143,24 +203,37 @@ export const generateSpeech = async (
       
       const textResponse = candidate.content?.parts?.[0]?.text;
       if (textResponse) {
-        console.warn("Text returned:", textResponse);
+        console.warn("[Gemini API] Model trả về text thay vì audio:", textResponse);
         throw new Error("Mô hình trả về văn bản thay vì âm thanh. Kiểm tra lại định dạng hội thoại.");
       }
       
+      console.error("[Gemini API] Không tìm thấy dữ liệu audio trong response");
       throw new Error("Không nhận được dữ liệu âm thanh.");
 
     } catch (error: any) {
-      console.error("Gemini TTS Error:", error);
+      console.error("[Gemini TTS Error] Chi tiết lỗi:", {
+        message: error.message,
+        name: error.name,
+        code: error.code,
+        status: error.status,
+        stack: error.stack,
+        fullError: JSON.stringify(error, null, 2),
+        errorObject: error
+      });
+      
       const errorStr = JSON.stringify(error);
       
       // Re-throw 429 errors to trigger retry
       if (errorStr.includes("429") || errorStr.includes("RESOURCE_EXHAUSTED")) {
+        console.warn("[Gemini TTS Error] Lỗi 429/RESOURCE_EXHAUSTED - sẽ retry");
         throw error;
       }
       
       if (errorStr.includes("AudioOut model") || error.message?.includes("non-audio response")) {
+        console.error("[Gemini TTS Error] Lỗi AudioOut model hoặc non-audio response");
         throw new Error("Mô hình đang bận hoặc văn bản không hợp lệ.");
       }
+      
       throw new Error(error.message || "Lỗi kết nối API.");
     }
   });
@@ -174,12 +247,16 @@ const writeString = (view: DataView, offset: number, string: string) => {
 
 export const base64ToBlobUrl = (base64: string): string => {
   try {
+    console.log(`[base64ToBlobUrl] Chuyển đổi base64 (length: ${base64.length}) sang WAV`);
+    
     const binaryString = window.atob(base64);
     const len = binaryString.length;
     const bytes = new Uint8Array(len);
     for (let i = 0; i < len; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
+
+    console.log(`[base64ToBlobUrl] Binary data length: ${len} bytes`);
 
     const sampleRate = 24000;
     const numChannels = 1;
@@ -207,9 +284,16 @@ export const base64ToBlobUrl = (base64: string): string => {
     view.setUint32(40, subChunk2Size, true);
 
     const blob = new Blob([view, bytes], { type: 'audio/wav' });
-    return URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    
+    console.log(`[base64ToBlobUrl] ✓ Tạo blob URL thành công: ${url}`);
+    return url;
   } catch (e) {
-    console.error("WAV conversion error:", e);
+    console.error("[base64ToBlobUrl] Lỗi chuyển đổi WAV:", {
+      error: e,
+      message: e instanceof Error ? e.message : String(e),
+      stack: e instanceof Error ? e.stack : undefined
+    });
     throw new Error("Lỗi xử lý file âm thanh.");
   }
 };
