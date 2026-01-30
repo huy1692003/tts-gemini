@@ -35,6 +35,7 @@ const executeWithRetry = async <T>(
 ): Promise<T> => {
   const apiKeys = getApiKeys();
   const usedKeys = new Set<string>();
+  const errorDetails: Array<{keyIndex: number, error: any}> = [];
   let lastError: any;
 
   console.log(`[Retry] Bắt đầu với tối đa ${maxRetries} lần thử`);
@@ -43,20 +44,34 @@ const executeWithRetry = async <T>(
     try {
       // Get a random key that hasn't been used yet
       let apiKey: string;
+      let keyIndex: number;
       do {
         apiKey = getRandomApiKey();
+        keyIndex = apiKeys.indexOf(apiKey);
       } while (usedKeys.has(apiKey) && usedKeys.size < apiKeys.length);
       
       usedKeys.add(apiKey);
-      console.log(`[Retry] Lần thử ${attempt + 1}/${maxRetries} - Sử dụng key: ${apiKey.substring(0, 10)}...`);
+      console.log(`[Retry] Lần thử ${attempt + 1}/${maxRetries} - Sử dụng key #${keyIndex + 1}: ${apiKey.substring(0, 10)}...`);
       
       const result = await operation(apiKey);
       console.log(`[Retry] ✓ Thành công ở lần thử ${attempt + 1}`);
       return result;
     } catch (error: any) {
       lastError = error;
+      const keyIndex = apiKeys.indexOf(Array.from(usedKeys)[usedKeys.size - 1]);
       
-      console.error(`[Retry] ✗ Lỗi ở lần thử ${attempt + 1}:`, {
+      errorDetails.push({
+        keyIndex: keyIndex + 1,
+        error: {
+          message: error.message,
+          code: error.code,
+          status: error.status,
+          type: error.constructor.name,
+          details: error
+        }
+      });
+      
+      console.error(`[Retry] ✗ Lỗi ở lần thử ${attempt + 1} (Key #${keyIndex + 1}):`, {
         message: error.message,
         code: error.code,
         status: error.status,
@@ -66,7 +81,7 @@ const executeWithRetry = async <T>(
       // If it's a 429 error, try with another key
       const errorStr = JSON.stringify(error);
       if (errorStr.includes("429") || errorStr.includes("RESOURCE_EXHAUSTED")) {
-        console.warn(`[Retry] API key bị giới hạn (429/RESOURCE_EXHAUSTED), thử key khác...`);
+        console.warn(`[Retry] API key #${keyIndex + 1} bị giới hạn (429/RESOURCE_EXHAUSTED), thử key khác...`);
         continue;
       }
       
@@ -76,9 +91,32 @@ const executeWithRetry = async <T>(
     }
   }
   
-  // All retries failed
-  console.error(`[Retry] Tất cả ${usedKeys.size} API keys đều thất bại. Lỗi cuối:`, lastError);
-  throw new Error("Tất cả API keys đều bị giới hạn. Vui lòng thử lại sau.");
+  // All retries failed - create detailed error message
+  console.error(`[Retry] ===== TẤT CẢ API KEYS THẤT BẠI =====`);
+  console.error(`[Retry] Đã thử ${errorDetails.length} keys:`);
+  
+  let detailedErrorMessage = `Tất cả ${errorDetails.length} API keys đều thất bại:\n\n`;
+  
+  errorDetails.forEach((detail, index) => {
+    const errorMsg = detail.error.message || 'Không có thông báo lỗi';
+    const errorCode = detail.error.code || detail.error.status || 'N/A';
+    
+    detailedErrorMessage += `Key #${detail.keyIndex}: ${errorMsg} (Code: ${errorCode})\n`;
+    
+    console.error(`[Retry] Key #${detail.keyIndex}:`, {
+      message: errorMsg,
+      code: errorCode,
+      fullError: detail.error
+    });
+  });
+  
+  detailedErrorMessage += `\nVui lòng kiểm tra logs để biết chi tiết.`;
+  
+  console.error(`[Retry] ===== CHI TIẾT ĐẦY ĐỦ =====`);
+  console.error(`[Retry] All error details:`, JSON.stringify(errorDetails, null, 2));
+  console.error(`[Retry] Last error object:`, lastError);
+  
+  throw new Error(detailedErrorMessage);
 };
 
 export const generateSpeech = async (
@@ -175,6 +213,7 @@ export const generateSpeech = async (
 
       if (!candidate) {
         console.error("[Gemini API] Không có candidate trong response");
+        console.error("[Gemini API] Full response:", JSON.stringify(response, null, 2));
         throw new Error("API không phản hồi.");
       }
 
@@ -196,6 +235,7 @@ export const generateSpeech = async (
       // Error handling
       if (candidate.finishReason && candidate.finishReason !== "STOP") {
          console.error(`[Gemini API] Finish reason không phải STOP: ${candidate.finishReason}`);
+         console.error(`[Gemini API] Full candidate:`, JSON.stringify(candidate, null, 2));
          if (candidate.finishReason === "SAFETY") throw new Error("Nội dung không an toàn.");
          if (candidate.finishReason === "RECITATION") throw new Error("Nội dung vi phạm bản quyền.");
          if (candidate.finishReason === "OTHER") throw new Error("Lỗi xử lý mô hình. Thử lại với đoạn văn ngắn hơn.");
@@ -204,27 +244,36 @@ export const generateSpeech = async (
       const textResponse = candidate.content?.parts?.[0]?.text;
       if (textResponse) {
         console.warn("[Gemini API] Model trả về text thay vì audio:", textResponse);
+        console.error("[Gemini API] Full candidate:", JSON.stringify(candidate, null, 2));
         throw new Error("Mô hình trả về văn bản thay vì âm thanh. Kiểm tra lại định dạng hội thoại.");
       }
       
       console.error("[Gemini API] Không tìm thấy dữ liệu audio trong response");
+      console.error("[Gemini API] Full response:", JSON.stringify(response, null, 2));
       throw new Error("Không nhận được dữ liệu âm thanh.");
 
     } catch (error: any) {
-      console.error("[Gemini TTS Error] Chi tiết lỗi:", {
-        message: error.message,
-        name: error.name,
-        code: error.code,
-        status: error.status,
-        stack: error.stack,
-        fullError: JSON.stringify(error, null, 2),
-        errorObject: error
-      });
+      console.error("[Gemini TTS Error] ===== CHI TIẾT LỖI =====");
+      console.error("[Gemini TTS Error] Message:", error.message);
+      console.error("[Gemini TTS Error] Name:", error.name);
+      console.error("[Gemini TTS Error] Code:", error.code);
+      console.error("[Gemini TTS Error] Status:", error.status);
+      console.error("[Gemini TTS Error] Stack:", error.stack);
+      console.error("[Gemini TTS Error] Full error object:", error);
+      console.error("[Gemini TTS Error] JSON stringify:", JSON.stringify(error, null, 2));
+      
+      // Log thêm các properties có thể có
+      if (error.response) {
+        console.error("[Gemini TTS Error] Response data:", error.response);
+      }
+      if (error.error) {
+        console.error("[Gemini TTS Error] Error field:", error.error);
+      }
       
       const errorStr = JSON.stringify(error);
       
       // Re-throw 429 errors to trigger retry
-      if (errorStr.includes("429") || errorStr.includes("RESOURCE_EXHAUSTED")) {
+      if (errorStr.includes("429") || errorStr.includes("RESOURCE_EXHAUSTED") || error.code === 429) {
         console.warn("[Gemini TTS Error] Lỗi 429/RESOURCE_EXHAUSTED - sẽ retry");
         throw error;
       }
